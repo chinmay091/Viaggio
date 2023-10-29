@@ -1,0 +1,117 @@
+.container{
+    width: 100%;
+    box-shadow: 0 1px 7px 0 rgba(0,0,0,.4);
+    z-index: 1000;
+    top: 0;
+    position: sticky;
+    overflow-x: scroll;
+    
+}
+.navbar{
+    width: 100%;
+    background: #fff;
+   
+    display: flex;
+    justify-content: space-between;
+    padding: 3rem;
+    align-items: center;
+    height: 6rem;
+    
+    
+    
+}
+.navbar__logo{
+    margin-left: 3rem;
+    padding: 0.5rem;
+}
+.navbar__logo  img{
+    height: 3.8rem;
+  
+}
+.navbar__icons{
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    margin: 3rem;
+    padding: 0.5rem;
+   
+}
+.navbar__username > span{
+   font-size: 1.5rem;
+   font-weight: 500;
+   color: #3570ca;
+   margin-left: 1rem;
+}
+
+.navbar__user a{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #f2f2f2;;
+    padding:0.5rem 1rem;
+    border-radius: 10px;
+}
+.navbar__icon a{
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0.5rem;
+    margin-left: 2rem;
+    
+}
+
+.navbar__icon > a > span{
+    font-size: 1.5rem;
+    color: black;
+    font-weight: 600;
+}
+
+
+.navbar__icon a:link {
+    color: black;
+    text-decoration: none;
+}
+.navbar__icon a:visited {
+    color: black;
+}
+
+.navbar__icon a:hover{
+    color: #3570ca;
+    cursor: pointer;
+    border-bottom: 4px solid #3570ca;
+    margin-top: 4px;
+}
+
+.navbar__icon a:active {
+    color: #3570ca;
+}
+a{
+    font-size: 1.5rem;
+    text-decoration: none;
+    color: #3570ca;
+}
+
+@media only screen and (max-width:768px){
+    .navbar__logo {
+        margin-left: -25px;
+        padding: 0px;
+    } 
+    .navbar__logo img {
+        height: 2rem;
+    }
+    .navbar__icon a {
+        
+        padding: 0px;
+        
+    }
+    
+    .navbar__icon > a{
+        display: flex;
+        flex-direction: column;
+    }
+    .navbar__icons {
+        
+        margin: 0;
+        padding: 0rem;
+    }
+}

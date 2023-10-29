@@ -1,0 +1,59 @@
+.register{
+    background-color:white;
+    width: 100vw;
+    height: 100vh;
+    position: fixed;
+    z-index: 100000;
+    top: 0;
+
+}
+.register__conatainer{
+width: 350px;
+height:350px;
+left: 50%;
+top:15%;
+transform: translate(-50%, 0%);
+background: lightgrey;
+position: absolute;
+text-align: center;
+border-radius: 10px;
+}
+input{
+    padding: 5px;
+    border-radius: 5px;
+    margin: 10px;
+    background: white;
+    border: 1px solid grey;
+}
+.register__img {
+    margin-top: 20px;
+ padding: 30px auto;
+}
+.register__img > img {
+ width:50%;
+}
+
+.register p{
+    color: rgb(18, 83, 18);
+    font-size: 1.3rem;
+}
+.register  h3{
+    color: rgba(0, 0, 0, 0.717);
+    font-size: 1.5rem;
+}
+.btn{
+    padding: 1rem 4rem;
+    font-size: 1.6rem;
+    cursor: pointer;
+    border-radius: 50px;
+    border: none;
+    background-image: linear-gradient(to bottom right, rgba(78,172,253,255), rgba(8,92,243,255));
+    
+}
+.btn:hover{
+    background-image: linear-gradient(to bottom right, rgba(8,92,243,200), rgba(8,92,243,200));
+}
+input[type="text"],
+input[type="password"]{
+    padding: 10px;
+}

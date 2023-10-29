@@ -1,0 +1,115 @@
+.home__container{
+    width: 100%;
+    background-image: linear-gradient(rgba(6,20,36,255), rgba(20,68,122,255));
+    height: 66vh;
+    position: relative;
+
+}
+.home{
+    background: #fff;
+    width: 93%;
+    margin:  auto;
+    height: 50vh;
+    border-radius: 10px;
+    position: absolute;
+    left: 50%;
+    top: 42%;
+    transform: translate(-50%, -42%);
+   
+}
+.home > p{
+    font-size: 3rem;
+    position: absolute;
+    font-weight: 700;
+    margin-left: 50%;
+    transform: translate(-50%);
+    color: #3570ca;
+    margin-top: 2.5rem;
+    text-align: center;
+}
+ 
+.inputs{
+   display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 18rem 4rem;
+    flex-wrap: wrap;
+}
+.home__input {
+    width: 25%;
+   
+}
+.home__input > p{
+   font-size: 2rem;
+    font-weight: bold;
+   
+}
+.home__input > select{
+    border: 1px solid lightgrey;
+    border-radius: 4px;
+    outline: none;
+    font-size: 1.5rem;
+    width: 100%;
+    padding: 1rem;
+}   
+.home__input > input[type="date"]{
+    border: 1px solid lightgrey;
+    border-radius: 4px;
+    outline: none;
+    font-size: 1.5rem;
+    width: 100%;
+    padding: 1rem;
+}   
+.home__search{
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom:-2.3rem;
+    padding: 1.1rem 4rem;
+    font-size: 2rem;    
+    background-image: linear-gradient(to bottom right, rgba(78,172,253,255), rgba(8,92,243,255));
+    border-radius: 50px;
+    color: #fff;
+    font-weight: 700;
+    border: none;
+}
+.home__search:hover{
+cursor: pointer;
+background-image: linear-gradient(to bottom right, rgba(8,92,243,200), rgba(8,92,243,200));
+}
+
+.inputs input{
+    margin-left: 0;
+}
+@media only screen and (max-width:768px){
+    .home__input {
+        width: 33%;
+       
+    }
+    .home__input > select {
+        font-size: 1.2rem;
+        padding: 5px;
+    }
+    .home__input > input[type="date"] {  
+        font-size: 1.2rem;
+        padding: 5px;
+    }
+    .home__input > p {
+        font-size: 1.2rem;
+    }
+    .inputs {
+        margin: 13rem 1rem;
+    }
+    .home > p {
+        font-size: 2.2rem;
+    }
+    .home__container{
+        height: 50vh;
+    }
+    .home{
+        height: 35vh;
+    }
+    .home__search{
+        padding: 1rem 3rem;
+    }
+}
