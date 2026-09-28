@@ -1,0 +1,29 @@
+# --- Secrets / local environment (never push) ---
+.env
+.env.*
+!.env.example
+
+# --- Internal AI working docs (never push) ---
+docs/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+db.sqlite3
+*.sqlite3
+.coverage
+htmlcov/
+.pytest_cache/
+
+# --- Node (legacy app is already committed; keep new installs out) ---
+node_modules/
+npm-debug.log*
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
