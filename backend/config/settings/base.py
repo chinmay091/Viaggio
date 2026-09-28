@@ -73,7 +73,6 @@ LOCAL_APPS = [
     "apps.restaurants.apps.RestaurantsConfig",
     "apps.hotels.apps.HotelsConfig",
     "apps.trips.apps.TripsConfig",
-    "apps.analytics.apps.AnalyticsConfig",
     "apps.ingestion.apps.IngestionConfig",
     "apps.notifications.apps.NotificationsConfig",
 ]
