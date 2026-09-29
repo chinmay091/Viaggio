@@ -9,6 +9,7 @@ docs/
 # --- Python ---
 __pycache__/
 *.py[cod]
+celerybeat-schedule
 *.egg-info/
 .venv/
 venv/
