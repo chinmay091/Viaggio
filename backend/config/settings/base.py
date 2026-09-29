@@ -175,6 +175,13 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "apps.common.exceptions.custom_exception_handler",
+    # F6 — auth-endpoint throttling. DRF resolves ScopedRateThrottle scopes
+    # against DEFAULT_THROTTLE_RATES; applied per-view via throttle_scope.
+    "DEFAULT_THROTTLE_RATES": {
+        "login": "5/min",     # brute-force protection (per client IP)
+        "register": "3/min",  # bulk account creation protection (per client IP)
+        "refresh": "20/min",  # token-rotation spam (per user, else per IP)
+    },
 }
 
 # Simple JWT

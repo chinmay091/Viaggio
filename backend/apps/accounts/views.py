@@ -1,7 +1,8 @@
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework.throttling import ScopedRateThrottle
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 from .models import User, UserPreference
@@ -26,18 +27,39 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 class LoginView(TokenObtainPairView):
     """
     User login endpoint. Accepts email and password, returns JWT tokens and user profile.
+
+    F6: throttled (scope "login", per client IP for anonymous requests) against
+    brute-force password guessing.
     """
     permission_classes = [AllowAny]
     serializer_class = CustomTokenObtainPairSerializer
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "login"
+
+
+class RefreshView(TokenRefreshView):
+    """
+    SimpleJWT refresh endpoint.
+
+    F6: throttled (scope "refresh") per user when the request carries a Bearer
+    token, otherwise per client IP, to limit token-rotation spam.
+    """
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "refresh"
 
 
 class RegisterView(generics.CreateAPIView):
     """
     User registration endpoint. Registers a new account and immediately returns
     JWT authentication tokens along with the created profile.
+
+    F6: throttled (scope "register", per client IP for anonymous requests) against
+    bulk account creation.
     """
     permission_classes = [AllowAny]
     serializer_class = UserRegistrationSerializer
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "register"
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
