@@ -1,3 +1,5 @@
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers as drf_serializers
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
@@ -5,6 +7,16 @@ from rest_framework import status
 from django.db import connection
 from django.core.cache import cache
 import time
+
+HEALTH_CHECK_RESPONSE = inline_serializer(
+    "HealthCheckResponse",
+    fields={
+        "status": drf_serializers.CharField(help_text="'healthy' or 'degraded'"),
+        "version": drf_serializers.CharField(),
+        "timestamp": drf_serializers.FloatField(help_text="Unix epoch seconds"),
+        "services": drf_serializers.DictField(child=drf_serializers.CharField()),
+    },
+)
 
 
 class HealthCheckView(APIView):
@@ -15,6 +27,9 @@ class HealthCheckView(APIView):
     """
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        responses={200: HEALTH_CHECK_RESPONSE, 503: HEALTH_CHECK_RESPONSE},
+    )
     def get(self, request):
         health = {
             "status": "healthy",

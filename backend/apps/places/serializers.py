@@ -64,6 +64,7 @@ class PlaceListSerializer(serializers.ModelSerializer):
         )
         read_only_fields = fields
 
+    @extend_schema_field({"type": "array", "items": {"type": "string"}, "description": "Tag names"})
     def get_tags(self, obj):
         """Tag names (prefetched via `prefetch_related("tags")` in the view)."""
         return [tag.name for tag in obj.tags.all()]
