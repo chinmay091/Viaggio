@@ -1,0 +1,153 @@
+{
+  "type": "FeatureCollection",
+  "name": "overture:poi",
+  "crs": {
+    "type": "name",
+    "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "poi.1.cafe0001",
+      "properties": {
+        "name": "Brew & Bean",
+        "category": ["food_and_drink"],
+        "subcategory": ["cafe"],
+        "address": { "street": "Colaba Causeway", "number": "12" },
+        "locality": "Mumbai",
+        "region": "Maharashtra",
+        "country": "IN",
+        "phone": ["+91 22 2222 0001"],
+        "website": ["https://brewandbean.example.com"],
+        "opening_hours": {
+          "regular": [{ "days": "mo-su", "opens": "08:00", "closes": "23:00" }]
+        },
+        "description": "Neighborhood coffee bar."
+      },
+      "geometry": { "type": "Point", "coordinates": [72.8269, 18.9197] }
+    },
+    {
+      "type": "Feature",
+      "id": "poi.1.hotel0002",
+      "properties": {
+        "name": "The Seaview",
+        "category": ["lodging"],
+        "subcategory": ["hotel"],
+        "address": { "street": "Marine Drive", "number": "44" },
+        "locality": "Mumbai",
+        "region": "Maharashtra",
+        "country": "IN",
+        "phone": ["+91 22 2222 0002"],
+        "website": ["https://theseaview.example.com"],
+        "opening_hours": null,
+        "description": "Heritage hotel on the promenade."
+      },
+      "geometry": { "type": "Point", "coordinates": [72.8235, 18.943] }
+    },
+    {
+      "type": "Feature",
+      "id": "poi.1.rest0003",
+      "properties": {
+        "name": "Spice Route",
+        "category": ["food_and_drink"],
+        "subcategory": ["restaurant"],
+        "address": { "street": "Churchgate Road", "number": "7" },
+        "locality": "Mumbai",
+        "region": "Maharashtra",
+        "country": "IN",
+        "phone": [],
+        "website": [],
+        "opening_hours": {
+          "regular": [{ "days": "mo-sa", "opens": "11:30", "closes": "22:30" }]
+        },
+        "description": "Mughlai and South Indian kitchen."
+      },
+      "geometry": { "type": "Point", "coordinates": [72.8308, 18.9241] }
+    },
+    {
+      "type": "Feature",
+      "id": "poi.1.rest0003",
+      "properties": {
+        "name": "Spice Route",
+        "category": ["food_and_drink"],
+        "subcategory": ["restaurant"],
+        "address": { "street": "Churchgate Road", "number": "7" },
+        "locality": "Mumbai",
+        "region": "Maharashtra",
+        "country": "IN",
+        "phone": [],
+        "website": [],
+        "opening_hours": {
+          "regular": [{ "days": "mo-sa", "opens": "11:30", "closes": "22:30" }]
+        },
+        "description": "Mughlai and South Indian kitchen."
+      },
+      "geometry": { "type": "Point", "coordinates": [72.8308, 18.9241] }
+    },
+    {
+      "type": "Feature",
+      "id": "poi.1.misc0004",
+      "properties": {
+        "category": ["amenity"],
+        "subcategory": ["fountain"],
+        "locality": "Mumbai",
+        "region": "Maharashtra",
+        "country": "IN"
+      },
+      "geometry": { "type": "Point", "coordinates": [72.8299, 18.9211] }
+    },
+    {
+      "type": "Feature",
+      "id": "poi.1.park0005",
+      "properties": {
+        "name": "Fremantle Garden",
+        "category": ["parks_outdoors"],
+        "subcategory": ["park"],
+        "locality": "Mumbai",
+        "region": "Maharashtra",
+        "country": "IN"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [72.835, 18.918],
+            [72.836, 18.918],
+            [72.836, 18.919],
+            [72.835, 18.919],
+            [72.835, 18.918]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Ghost POI",
+        "category": ["food_and_drink"],
+        "locality": "Mumbai"
+      },
+      "geometry": { "type": "Point", "coordinates": [72.8311, 18.9255] }
+    },
+    {
+      "type": "Feature",
+      "id": "poi.1.shop0006",
+      "properties": {
+        "name": "Cuffe Parade Market",
+        "category": ["shop"],
+        "subcategory": ["market"],
+        "address": { "street": "Cuffe Parade", "number": "3" },
+        "locality": null,
+        "region": "Maharashtra",
+        "country": "IN",
+        "phone": ["+91 22 2222 0006"],
+        "website": [],
+        "opening_hours": {
+          "regular": [{ "days": "mo-su", "opens": "09:00", "closes": "20:00" }]
+        },
+        "description": null
+      },
+      "geometry": { "type": "Point", "coordinates": [72.8221, 18.9249] }
+    }
+  ]
+}
