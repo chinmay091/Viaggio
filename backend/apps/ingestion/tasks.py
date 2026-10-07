@@ -111,7 +111,12 @@ def run_ingestion_job(self, job_id: str):
         )
         result.fetch_errors = fetch_errors
 
-        # P2-F6 hook (attached in F6): assign_cities(city_name=region.city or None)
+        # P2-F6 hook: fill blank-city places from cached city boundaries.
+        city_assignment = None
+        if region.city:
+            from apps.geo.services import assign_cities
+
+            city_assignment = assign_cities(city_name=region.city)
 
         job.refresh_from_db()
         job.status = "completed"
@@ -120,7 +125,7 @@ def run_ingestion_job(self, job_id: str):
         job.error_log = (job.error_log + local_errors)[-100:]
         job.save()
 
-        return {"status": "completed", **asdict(result)}
+        return {"status": "completed", "city_assignment": city_assignment, **asdict(result)}
     except Exception as exc:
         job.refresh_from_db()
         for entry in local_errors[-100:]:

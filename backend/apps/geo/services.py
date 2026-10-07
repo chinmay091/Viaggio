@@ -10,7 +10,7 @@ import h3
 import requests
 from django.utils import timezone
 
-from apps.geo.models import AirQualityData, WeatherData
+from apps.geo.models import AirQualityData, City, WeatherData
 from apps.places.models import Place
 
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
@@ -273,3 +273,24 @@ def fetch_air_quality_for_city(
         "upserted": created,
         "pruned": pruned,
     }
+
+
+def assign_cities(city_name: Optional[str] = None) -> list[dict]:
+    """
+    Assign cached city names to active places with a BLANK city (P2-F6, P2-D3).
+
+    ``location__within`` on geography = ST_Within(location, boundary),
+    GiST-backed by ``idx_geocity_boundary_gist``. Provider-provided locality
+    always wins: only rows with ``city=""`` are touched.
+    """
+    cities = City.objects.all()
+    if city_name:
+        cities = cities.filter(name=city_name)
+    results = []
+    for city in cities:
+        assigned = (
+            Place.objects.filter(is_active=True, city="", location__within=city.boundary)
+            .update(city=city.name)
+        )
+        results.append({"city": city.name, "assigned": assigned})
+    return results

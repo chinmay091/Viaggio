@@ -1,3 +1,5 @@
+from django.contrib.gis.db.models import MultiPolygonField, PointField
+from django.contrib.postgres.indexes import GistIndex
 from django.db import models
 
 from apps.common.models import AuditModel
@@ -239,3 +241,39 @@ class AirQualityData(models.Model):
 
     def __str__(self):
         return f"AirQualityData({self.h3_index}, {self.timestamp:%Y-%m-%d %H:%M}, AQI={self.us_aqi})"
+
+
+class City(AuditModel):
+    """
+    Cached administrative boundary used for place assignment + reverse
+    geocoding (P2-D3). Loaded once per city (one Nominatim call); per-point
+    reverse geocoding is local point-in-boundary over this cached geometry.
+    """
+
+    name = models.CharField(max_length=100, unique=True)
+    slug = models.SlugField(unique=True)
+    country = models.CharField(max_length=100, blank=True, default="")
+    boundary = MultiPolygonField(
+        geography=True,
+        srid=4326,
+        spatial_index=False,  # explicit GistIndex below (P1 duplicate-index trap)
+    )
+    centroid = PointField(geography=True, srid=4326, null=True, blank=True)
+    source = models.CharField(
+        max_length=50,
+        choices=(
+            ("nominatim", "Nominatim/OSM"),
+            ("geojson", "GeoJSON file"),
+            ("bbox", "Rectangle"),
+        ),
+    )
+    source_id = models.CharField(
+        max_length=255, blank=True, default="", help_text='e.g. "relation/3165948"'
+    )
+
+    class Meta:
+        db_table = "geo_cities"
+        indexes = [GistIndex(fields=["boundary"], name="idx_geocity_boundary_gist")]
+
+    def __str__(self):
+        return f"City({self.name})"
