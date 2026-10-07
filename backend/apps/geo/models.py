@@ -78,6 +78,12 @@ class WeatherData(models.Model):
                 name="idx_geoweather_h3_ts",
             ),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["h3_index", "timestamp", "source", "is_forecast"],
+                name="uniq_geo_weather_h3_ts_src_fc",
+            ),
+        ]
 
     def __str__(self):
         kind = "forecast" if self.is_forecast else "observation"

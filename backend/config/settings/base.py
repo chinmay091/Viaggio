@@ -244,6 +244,15 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
 
+from celery.schedules import crontab
+
+CELERY_BEAT_SCHEDULE = {
+    "geo-refresh-weather-hourly": {
+        "task": "geo.refresh_weather",
+        "schedule": crontab(minute=5),
+    },
+}
+
 # CORS Configuration
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOWED_ORIGINS = [
