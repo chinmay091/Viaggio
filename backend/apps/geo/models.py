@@ -150,3 +150,92 @@ class AreaContext(AuditModel):
 
     def __str__(self):
         return f"AreaContext({self.h3_index}, {self.time_bucket:%Y-%m-%d %H:%M})"
+
+
+class AirQualityData(models.Model):
+    """
+    High-volume air-quality time-series data, one row per H3 cell (resolution 7)
+    per hourly timestamp. Sourced from the Open-Meteo Air Quality API (keyless).
+
+    Same documented exception to the AuditModel/UUID rule as WeatherData:
+    plain BigAutoField primary key for dense, index-friendly writes.
+    """
+
+    id = models.BigAutoField(
+        primary_key=True,
+        help_text="Dense integer primary key (time-series volume; see model docstring)",
+    )
+    h3_index = models.CharField(
+        max_length=16,
+        help_text="H3 cell index at resolution 7 (weather/AQ grid)",
+    )
+    timestamp = models.DateTimeField(
+        help_text="Observation or forecast time (UTC) this row describes",
+    )
+    us_aqi = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="US Air Quality Index (0-500; null when the cell is outside coverage)",
+    )
+    pm2_5 = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Fine particulate matter ≤2.5µm, µg/m³",
+    )
+    pm10 = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Particulate matter ≤10µm, µg/m³",
+    )
+    ozone = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Ground-level ozone O3, µg/m³",
+    )
+    nitrogen_dioxide = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Nitrogen dioxide NO2, µg/m³",
+    )
+    carbon_monoxide = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Carbon monoxide CO, mg/m³",
+    )
+    source = models.CharField(
+        max_length=50,
+        default="open_meteo_aq",
+        help_text="Upstream air-quality provider identifier",
+    )
+    fetched_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When the provider response was fetched and stored",
+    )
+
+    class Meta:
+        db_table = "geo_airqualitydata"
+        indexes = [
+            models.Index(
+                fields=["h3_index", "timestamp"],
+                name="idx_geoaq_h3_ts",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["h3_index", "timestamp", "source"],
+                name="uniq_geo_aq_h3_ts_src",
+            ),
+        ]
+
+    def __str__(self):
+        return f"AirQualityData({self.h3_index}, {self.timestamp:%Y-%m-%d %H:%M}, AQI={self.us_aqi})"

@@ -1,5 +1,5 @@
 """
-Geo domain services: weather ingestion (P2-F4).
+Geo domain services: weather and air-quality ingestion, and city boundaries (P2-F4, P2-F5, P2-F6).
 """
 
 from datetime import datetime, timedelta, timezone as dt_timezone
@@ -10,7 +10,7 @@ import h3
 import requests
 from django.utils import timezone
 
-from apps.geo.models import WeatherData
+from apps.geo.models import AirQualityData, WeatherData
 from apps.places.models import Place
 
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
@@ -158,6 +158,118 @@ def fetch_weather_for_city(
     return {
         "cells": len(cells),
         "rows": len(all_rows),
+        "upserted": created,
+        "pruned": pruned,
+    }
+
+
+# --- P2-F5: Air quality (Open-Meteo Air Quality API, keyless) ----------------
+#
+# Probed live 2026-10-05/06: the combined multi-variable request
+# (?hourly=us_aqi,pm2_5,...) is rejected with HTTP 400, and `sulfur_dioxide`
+# is not a supported hourly variable at all (400). The service therefore
+# issues one light request per supported variable per batch and merges the
+# hourly arrays by timestamp below.
+OPEN_METEO_AQ_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
+AQ_RETENTION_DAYS = 14
+# API variable -> model field
+AQ_VARIABLES = {
+    "us_aqi": "us_aqi",
+    "pm2_5": "pm2_5",
+    "pm10": "pm10",
+    "ozone": "ozone",
+    "nitrogen_dioxide": "nitrogen_dioxide",
+    "carbon_monoxide": "carbon_monoxide",
+}
+AQ_UPDATE_FIELDS = list(AQ_VARIABLES.values())
+
+
+def _merge_aq_into(merged, batch, loc_data, var):
+    """Merge one variable's hourly arrays into merged[cell][time_str][field]."""
+    times = (loc_data.get("hourly") or {}).get("time") or []
+    series = (loc_data.get("hourly") or {}).get(var) or []
+    for loc_idx, (_, _, cell) in enumerate(batch):
+        per_cell = merged.setdefault(cell, {})
+        for i, t in enumerate(times):
+            per_cell.setdefault(t, {})[AQ_VARIABLES[var]] = (
+                series[i] if i < len(series) else None
+            )
+
+
+def fetch_air_quality_for_city(
+    city: str,
+    hours_ahead: int = 48,
+    now: Optional[datetime] = None,
+    session: Optional[requests.Session] = None,
+) -> dict:
+    """
+    Fetch and store hourly air quality for the city's H3 res7 cells.
+    One request per AQ variable per 500-point batch (combined set returns 400);
+    responses are merged per cell/timestamp. Rows where every pollutant is NULL
+    (cell outside model coverage) are dropped. Idempotent upsert via the
+    (h3_index, timestamp, source) unique constraint; prunes > 14 days old.
+    """
+    now = now or timezone.now()
+    session = session or requests.Session()
+    cells = city_weather_cells(city)
+    if not cells:
+        return {"cells": 0, "rows": 0, "upserted": 0, "pruned": 0}
+
+    points = [(h3.cell_to_latlng(c)[0], h3.cell_to_latlng(c)[1], c) for c in cells]
+    forecast_days = max(1, math.ceil(hours_ahead / 24))
+    merged: dict[str, dict[str, dict]] = {}
+
+    for batch in _chunks(points, 500):
+        lats = ",".join(str(round(p[0], 4)) for p in batch)
+        lngs = ",".join(str(round(p[1], 4)) for p in batch)
+        for var in AQ_VARIABLES:
+            params = {
+                "latitude": lats,
+                "longitude": lngs,
+                "hourly": var,
+                "forecast_days": forecast_days,
+                "timezone": "UTC",
+            }
+            resp = session.get(OPEN_METEO_AQ_URL, params=params, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            locations_data = data if isinstance(data, list) else [data]
+            for loc_idx, loc_data in enumerate(locations_data):
+                if loc_idx >= len(batch):
+                    break
+                _merge_aq_into(merged, batch, loc_data, var)
+
+    rows = []
+    for cell, per_time in merged.items():
+        for t, values in per_time.items():
+            if all(v is None for v in values.values()):
+                continue  # outside coverage
+            dt = datetime.fromisoformat(t)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=dt_timezone.utc)
+            row = AirQualityData(h3_index=cell, timestamp=dt, source="open_meteo_aq")
+            for field, val in values.items():
+                if val is not None:
+                    setattr(row, field, val)
+            rows.append(row)
+
+    created = 0
+    if rows:
+        AirQualityData.objects.bulk_create(
+            rows,
+            batch_size=500,
+            update_conflicts=True,
+            update_fields=AQ_UPDATE_FIELDS,
+            unique_fields=["h3_index", "timestamp", "source"],
+        )
+        created = len(rows)
+
+    cutoff = now - timedelta(days=AQ_RETENTION_DAYS)
+    pruned = AirQualityData.objects.filter(timestamp__lt=cutoff).delete()[0]
+
+    return {
+        "cells": len(cells),
+        "rows": len(rows),
         "upserted": created,
         "pruned": pruned,
     }
