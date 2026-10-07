@@ -74,6 +74,14 @@ def run_ingestion_job(self, job_id: str):
     if job is None or not job.mark_running():
         return {"status": "skipped"}
 
+    # Collected during the run (fetch + upsert). Merged with any pre-existing
+    # DB error_log entries (from earlier failed attempts) at completion.
+    local_errors: list[dict] = []
+
+    def on_error(entry: dict):
+        local_errors.append(entry)
+        job.append_error(entry)
+
     try:
         provider_name = job.provider.upper()
         if provider_name not in PROVIDERS:
@@ -82,7 +90,7 @@ def run_ingestion_job(self, job_id: str):
         provider = PROVIDERS[provider_name]()
         region = parse_region(job.region)
 
-        features, fetch_errors = provider.fetch(region, log=print)
+        features, fetch_errors = provider.fetch(region, log=print, on_error=on_error)
         job.total_records = len(features)
         job.save(update_fields=["total_records"])
 
@@ -94,9 +102,6 @@ def run_ingestion_job(self, job_id: str):
                 skipped_records=F("skipped_records") + s,
             )
 
-        def on_error(err: dict):
-            job.append_error(err)
-
         result = provider.upsert(
             region,
             features,
@@ -106,18 +111,20 @@ def run_ingestion_job(self, job_id: str):
         )
         result.fetch_errors = fetch_errors
 
-        # P2-F6 hook will be attached here: assign_cities_for_job(job)
+        # P2-F6 hook (attached in F6): assign_cities(city_name=region.city or None)
 
         job.refresh_from_db()
         job.status = "completed"
         job.completed_at = timezone.now()
         job.error_count = result.fetch_errors + len(result.errors)
-        job.error_log = result.errors[-100:]
+        job.error_log = (job.error_log + local_errors)[-100:]
         job.save()
 
         return {"status": "completed", **asdict(result)}
     except Exception as exc:
         job.refresh_from_db()
+        for entry in local_errors[-100:]:
+            job.append_error(entry)
         job.status = "failed"
         job.append_error({"where": "task", "error": str(exc)})
         job.save()

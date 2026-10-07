@@ -39,8 +39,18 @@ class PlaceProvider(ABC):
     ]
 
     @abstractmethod
-    def fetch(self, region: Region, log: Callable = print) -> tuple[dict | list, int]:
-        """Fetch features for a region. Returns (features, fetch_errors)."""
+    def fetch(
+        self,
+        region: Region,
+        log: Callable = print,
+        on_error: Optional[Callable[[dict], None]] = None,
+    ) -> tuple[dict | list, int]:
+        """
+        Fetch features for a region. Returns (features, fetch_error_count).
+        ``on_error``, when provided, receives one dict per isolated fetch failure:
+        ``{"where": "<tile bbox or 'fixture'>", "error": "<message>"}`` so callers
+        (e.g. the job task) can record them in the job's error_log.
+        """
         pass
 
     @abstractmethod

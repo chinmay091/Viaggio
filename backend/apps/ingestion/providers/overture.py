@@ -119,11 +119,12 @@ def _bbox_from_center(lat: float, lng: float, radius_km: float) -> tuple[float, 
 def _tile_bbox(west: float, south: float, east: float, north: float) -> list[tuple[float, float, float, float]]:
     """Split a bbox into ~0.05° grid cells (each fetch stays ≤1000 features)."""
     cells = []
+    eps = 1e-9  # guard against float drift (e.g. 72.80 + 0.05 + 0.05 < 72.90)
     lon = west
-    while lon < east:
+    while lon < east - eps:
         cell_east = min(lon + TILE_DEG, east)
         lat = south
-        while lat < north:
+        while lat < north - eps:
             cell_north = min(lat + TILE_DEG, north)
             cells.append((round(lon, 6), round(lat, 6),
                           round(cell_east, 6), round(cell_north, 6)))
@@ -186,12 +187,20 @@ class OvertureProvider(PlaceProvider):
     def __init__(self, session: Optional[requests.Session] = None):
         self.session = session or requests.Session()
 
-    def fetch(self, region: Region, log: Callable = print) -> tuple[dict[str, dict], int]:
+    def fetch(
+        self,
+        region: Region,
+        log: Callable = print,
+        on_error: Optional[Callable[[dict], None]] = None,
+    ) -> tuple[dict[str, dict], int]:
         """
         Fetch Overture features from fixture or live API.
-        Per-tile retry: 3 attempts with 2s / 10s backoff; on error, records failure and continues.
+        Per-tile retry: 3 attempts with 2s / 10s backoff; on error, records failure
+        (via ``on_error``) and continues with the remaining tiles.
         """
         if region.fixture_path:
+            # Fixture load failures (missing file, bad shape) raise CommandError /
+            # ValueError -> structural job failure in the task, not silent empty runs.
             features = _load_fixture(region.fixture_path)
             return features, 0
 
@@ -230,6 +239,10 @@ class OvertureProvider(PlaceProvider):
                     else:
                         fetch_errors += 1
                         log(f"  ! tile {w},{s},{e},{n} failed after 3 attempts: {exc}")
+                        if on_error:
+                            on_error(
+                                {"where": f"tile {w},{s},{e},{n}", "error": str(exc)}
+                            )
 
         return features, fetch_errors
 

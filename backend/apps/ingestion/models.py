@@ -80,12 +80,26 @@ class IngestionJob(AuditModel):
 
     def mark_running(self) -> bool:
         """
-        Atomic state transition from 'pending' to 'running'.
-        Returns True if this caller successfully transitioned the status, False otherwise
-        (used as a double-fire guard by worker tasks).
+        Atomic state transition from 'pending' (or 'failed' during a Celery retry)
+        to 'running'. Returns True if this caller successfully transitioned the
+        status, False otherwise (used as a double-fire guard by worker tasks).
+
+        Counters and completed_at are reset in the same UPDATE so a retry after a
+        partially-failed run re-processes from a clean slate (no double-counting
+        of batches the failed attempt already applied).
         """
-        rows_updated = IngestionJob.objects.filter(pk=self.pk, status="pending").update(
-            status="running", started_at=timezone.now()
+        rows_updated = IngestionJob.objects.filter(
+            pk=self.pk, status__in=["pending", "failed"]
+        ).update(
+            status="running",
+            started_at=timezone.now(),
+            total_records=0,
+            processed_records=0,
+            created_records=0,
+            updated_records=0,
+            skipped_records=0,
+            error_count=0,
+            completed_at=None,
         )
         if rows_updated == 1:
             self.status = "running"

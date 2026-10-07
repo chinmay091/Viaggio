@@ -131,6 +131,23 @@ class TestJobTaskExecution:
         assert job.error_count >= 1
         assert job.created_records == 1
 
+    def test_retry_allowed_after_failed(self):
+        """A Celery retry re-enters via mark_running; 'failed' must transition
+        back to 'running' (otherwise the retry would no-op on a failed job)."""
+        job = IngestionJob.objects.create(
+            provider=PlaceSource.OVERTURE,
+            region=f"fixture:{FIXTURE_PATH}|city:Mumbai",
+            status="pending",
+        )
+        assert job.mark_running() is True
+        job.status = "failed"
+        job.save(update_fields=["status"])
+        job.refresh_from_db()
+        assert job.mark_running() is True
+        assert job.status == "running"
+        # Second concurrent caller still loses.
+        assert job.mark_running() is False
+
     def test_unexpected_exception_marks_failed_and_retries(self):
         """Unexpected internal exceptions mark the job as failed and trigger task retry."""
         job = IngestionJob.objects.create(
@@ -149,6 +166,73 @@ class TestJobTaskExecution:
         assert job.status == "failed"
         assert len(job.error_log) > 0
         assert "DB exploded" in job.error_log[-1]["error"]
+
+    def test_retry_after_failure_reruns_job(self):
+        """
+        A Celery retry after a failed run re-executes the job end-to-end
+        (mark_running permits failed->running) and resets counters so the
+        re-run does not double-count batches from the failed attempt.
+        """
+        job = IngestionJob.objects.create(
+            provider=PlaceSource.OVERTURE,
+            region=f"fixture:{FIXTURE_PATH}|city:Mumbai",
+            status="pending",
+        )
+
+        # First attempt fails
+        with patch.object(run_ingestion_job, "retry", side_effect=Retry("Retrying")), \
+             patch("apps.ingestion.providers.overture.OvertureProvider.fetch",
+                   side_effect=RuntimeError("DB exploded")):
+            with pytest.raises(Retry):
+                run_ingestion_job(str(job.pk))
+        job.refresh_from_db()
+        assert job.status == "failed"
+
+        # Simulate partial counters left behind by the failed attempt
+        IngestionJob.objects.filter(pk=job.pk).update(
+            processed_records=3, created_records=2, error_count=1
+        )
+
+        # Celery redelivers the task -> full re-run to completion
+        result = run_ingestion_job(str(job.pk))
+        assert result["status"] == "completed"
+
+        job.refresh_from_db()
+        assert job.status == "completed"
+        assert job.created_records == 4
+        assert job.processed_records == 6  # reset to 0, then re-counted — not 6+3
+        assert job.completed_at is not None
+        # Failed attempt's error survives in the bounded log
+        assert any("DB exploded" in e["error"] for e in job.error_log)
+
+    def test_tile_failures_recorded_in_error_log_with_bbox(self):
+        """
+        Live-mode tile fetch failures (all retries exhausted) are isolated:
+        the job completes and each failed tile is recorded in the job's
+        error_log with its bbox (plan test #4).
+        """
+        job = IngestionJob.objects.create(
+            provider=PlaceSource.OVERTURE,
+            region="bbox:72.80,18.90,72.90,19.00|city:Mumbai",
+            status="pending",
+        )
+
+        import requests as _requests
+
+        with patch("time.sleep"), patch.object(
+            _requests.Session, "get", side_effect=_requests.RequestException("network down")
+        ):
+            result = run_ingestion_job(str(job.pk))
+
+        assert result["status"] == "completed"
+        job.refresh_from_db()
+        assert job.status == "completed"
+        assert job.created_records == 0
+        # 0.05 deg tiles over a 0.05x0.05 bbox -> 4 tiles, all failed
+        assert job.error_count == 4
+        assert len(job.error_log) == 4
+        assert all(e["where"].startswith("tile ") for e in job.error_log)
+        assert all("network down" in e["error"] for e in job.error_log)
 
     def test_error_log_bounded_at_100(self):
         """IngestionJob.error_log preserves at most 100 errors."""
