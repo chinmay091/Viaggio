@@ -3,6 +3,7 @@ Unit and integration tests for Celery ingestion job task and orchestration (P2-F
 """
 
 import io
+import threading
 from unittest.mock import MagicMock, patch
 import pytest
 from django.core.management import call_command
@@ -46,6 +47,21 @@ class TestParseRegion:
 
         with pytest.raises(ValueError):
             parse_region("")
+
+    def test_parse_region_rejects_unknown_and_malformed_parts(self):
+        """Unknown component keys, missing colon, and limit-only regions all
+        raise ValueError (P2-F7 negative cases)."""
+        with pytest.raises(ValueError, match="Unknown region component"):
+            parse_region("grid:72.80,18.90,72.88,19.02")
+
+        with pytest.raises(ValueError, match="missing ':'"):
+            parse_region("Mumbai")
+
+        with pytest.raises(ValueError, match="did not provide"):
+            parse_region("limit:50")
+
+        with pytest.raises(ValueError, match="Invalid limit"):
+            parse_region("limit:abc")
 
 
 @pytest.mark.django_db
@@ -261,3 +277,41 @@ class TestJobTaskExecution:
         assert "status:   completed" in output
         assert "created:  " in output
         assert "finished:" in output
+
+    @pytest.mark.django_db(transaction=True)
+    def test_concurrent_double_fire_single_winner(self):
+        """Two threads racing one pending job: exactly one wins mark_running
+        and executes; the other is a clean no-op (P2-F7, plan test #3 live
+        variant). transaction=True so both threads' connections see the row.
+        """
+        job = IngestionJob.objects.create(
+            provider=PlaceSource.OVERTURE,
+            region=f"fixture:{FIXTURE_PATH}|city:Mumbai",
+            status="pending",
+        )
+        barrier = threading.Barrier(2)
+        outcomes: list = []
+
+        def worker():
+            try:
+                barrier.wait(timeout=30)
+                outcomes.append(run_ingestion_job(str(job.pk)))
+            except Exception as exc:  # pragma: no cover - test harness
+                outcomes.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=120)
+
+        assert all(isinstance(o, dict) for o in outcomes), f"thread raised: {outcomes}"
+        assert sorted(o["status"] for o in outcomes) == ["completed", "skipped"]
+
+        job.refresh_from_db()
+        assert job.status == "completed"
+        # Counters written once, not twice (fixture: 4 created / 2 skipped).
+        assert job.created_records == 4
+        assert job.updated_records == 0
+        assert job.skipped_records == 2
+        assert job.processed_records == 6

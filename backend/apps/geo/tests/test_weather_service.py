@@ -286,3 +286,114 @@ class TestWeatherServiceExecution:
 
         with pytest.raises(requests.RequestException):
             fetch_weather_for_city("Mumbai", hours_ahead=24, session=mock_session)
+
+
+def _hours_48_payload() -> dict:
+    """Deterministic 48-hour Open-Meteo-style payload; every metric present."""
+    base = datetime(2026, 10, 6, 0, 0, tzinfo=dt_timezone.utc)
+    return {
+        "hourly": {
+            "time": [
+                (base + timedelta(hours=i)).strftime("%Y-%m-%dT%H:%M") for i in range(48)
+            ],
+            "temperature_2m": [25.0 + (i % 10) * 0.5 for i in range(48)],
+            "relative_humidity_2m": [60.0 + (i % 5) for i in range(48)],
+            "precipitation_probability": [float(i % 20) for i in range(48)],
+            "precipitation": [0.0 for _ in range(48)],
+            "weather_code": [i % 4 for i in range(48)],
+            "wind_speed_10m": [10.0 + (i % 8) for i in range(48)],
+        }
+    }
+
+
+def _two_res7_cells() -> list[str]:
+    cells = [h3.latlng_to_cell(18.94, 72.835, 7), h3.latlng_to_cell(19.10, 72.95, 7)]
+    assert len(set(cells)) == 2
+    return cells
+
+
+@pytest.mark.django_db
+class TestWeatherVolumeAndBoundary:
+    """P2-F7 hardening: 48h backfill volume = cells x 48 rows, exact retention
+    boundary (now - 14d survives, now - 14d - 1h pruned)."""
+
+    def test_backfill_volume_is_cells_times_48(self):
+        cells = _two_res7_cells()
+        mock_session = MagicMock()
+        mock_resp = MagicMock()
+        # Multi-point API returns one response per requested point (list).
+        mock_resp.json.return_value = [_hours_48_payload(), _hours_48_payload()]
+        mock_session.get.return_value = mock_resp
+
+        now = datetime(2026, 10, 6, 12, 0, tzinfo=dt_timezone.utc)
+        with patch("apps.geo.services.city_weather_cells", return_value=cells):
+            res = fetch_weather_for_city("Mumbai", hours_ahead=48, now=now, session=mock_session)
+
+        assert res["cells"] == 2
+        assert res["rows"] == 96
+        assert WeatherData.objects.count() == 96
+        for cell in cells:
+            assert WeatherData.objects.filter(h3_index=cell).count() == 48
+
+        # is_forecast splits strictly after `now` per cell: hours 13..47 forecast.
+        # 2 cells x (35 forecast + 13 observation).
+        assert WeatherData.objects.filter(is_forecast=True).count() == 70
+        assert WeatherData.objects.filter(is_forecast=False).count() == 26
+
+    def test_idempotent_second_run_adds_zero(self):
+        cells = _two_res7_cells()
+        mock_session = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = [_hours_48_payload(), _hours_48_payload()]
+        mock_session.get.return_value = mock_resp
+
+        now = datetime(2026, 10, 6, 12, 0, tzinfo=dt_timezone.utc)
+        with patch("apps.geo.services.city_weather_cells", return_value=cells):
+            first = fetch_weather_for_city("Mumbai", hours_ahead=48, now=now, session=mock_session)
+            second = fetch_weather_for_city("Mumbai", hours_ahead=48, now=now, session=mock_session)
+
+        assert first["rows"] == second["rows"] == 96
+        assert WeatherData.objects.count() == 96  # no duplicates on re-run
+
+    def test_retention_boundary_exactly_14d_survives(self):
+        cell = _two_res7_cells()[0]
+        now = timezone.now()
+        boundary_time = now - timedelta(days=14)           # == cutoff: strict < keeps it
+        just_old = now - timedelta(days=14) - timedelta(hours=1)  # pruned
+
+        for ts, temp in ((boundary_time, 20.0), (just_old, 19.0)):
+            WeatherData.objects.create(
+                h3_index=cell,
+                timestamp=ts,
+                temperature_c=temp,
+                humidity_pct=50.0,
+                precipitation_probability=0.0,
+                precipitation_mm=0.0,
+                wind_speed_kmh=5.0,
+                weather_code=0,
+                is_forecast=False,
+                source="open_meteo",
+            )
+
+        mock_session = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "hourly": {
+                "time": [],
+                "temperature_2m": [],
+                "relative_humidity_2m": [],
+                "precipitation_probability": [],
+                "precipitation": [],
+                "weather_code": [],
+                "wind_speed_10m": [],
+            }
+        }
+        mock_session.get.return_value = mock_resp
+
+        with patch("apps.geo.services.city_weather_cells", return_value=[cell]):
+            res = fetch_weather_for_city("Mumbai", hours_ahead=48, now=now, session=mock_session)
+
+        assert res["rows"] == 0
+        assert res["pruned"] == 1
+        assert WeatherData.objects.filter(timestamp=boundary_time).exists()
+        assert not WeatherData.objects.filter(timestamp=just_old).exists()

@@ -3,6 +3,8 @@ Hermetic unit and integration tests for OvertureProvider (P2-F2).
 """
 
 import io
+import random
+import time
 from unittest.mock import MagicMock, patch
 import pytest
 import requests
@@ -214,3 +216,65 @@ class TestOvertureProviderUpsert:
         assert "fetched:  5" in output or "fetched:  " in output
         assert "created:  4" in output
         assert "seed_places done" in output
+
+
+@pytest.mark.django_db
+class TestUpsertScale:
+    """P2-F7 hardening: 5,000-feature generated fixture (seeded RNG) through
+    the real upsert path — hermetic proxy for the live 100k egress-machine
+    run (v2 risk #2)."""
+
+    COUNT = 5000
+    W, S, E, N = 72.80, 18.90, 72.90, 19.02
+    CATEGORIES = ["restaurant", "cafe", "hotel", "shop"]
+
+    def _make_features(self, suffix: str = "") -> dict[str, dict]:
+        """Deterministic 5k features: same seed -> same coordinates, stable ids."""
+        rng = random.Random(20261008)
+        features: dict[str, dict] = {}
+        for i in range(self.COUNT):
+            fid = f"poi.f7.{i:05d}"
+            features[fid] = {
+                "id": fid,
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [
+                        round(rng.uniform(self.W, self.E), 6),
+                        round(rng.uniform(self.S, self.N), 6),
+                    ],
+                },
+                "properties": {
+                    "name": f"F7 Place {i}{suffix}",
+                    "category": [self.CATEGORIES[i % len(self.CATEGORIES)]],
+                },
+            }
+        return features
+
+    def test_5000_feature_upsert_timing_and_idempotency(self):
+        provider = OvertureProvider()
+        region = Region(city="Mumbai")
+
+        features = self._make_features()
+        start = time.monotonic()
+        result = provider.upsert(region, features, log=lambda *a, **kw: None)
+        elapsed_create = time.monotonic() - start
+
+        assert result.created == self.COUNT
+        assert result.updated == 0
+        assert result.skipped == 0
+        assert result.errors == []
+        assert Place.objects.count() == self.COUNT
+        assert Place.objects.filter(city="Mumbai").count() == self.COUNT
+        assert elapsed_create < 60, f"5k upsert took {elapsed_create:.1f}s (budget 60s)"
+
+        # Idempotent re-run: same ids, changed names -> all updates, no new rows.
+        features = self._make_features(suffix=" v2")
+        start = time.monotonic()
+        result2 = provider.upsert(region, features, log=lambda *a, **kw: None)
+        elapsed_update = time.monotonic() - start
+
+        assert result2.created == 0
+        assert result2.updated == self.COUNT
+        assert result2.errors == []
+        assert Place.objects.count() == self.COUNT
+        assert elapsed_update < 60, f"5k re-upsert took {elapsed_update:.1f}s (budget 60s)"

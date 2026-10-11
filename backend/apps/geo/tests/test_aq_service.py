@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
+import h3
 import pytest
 import requests
 from django.contrib.gis.geos import Point
@@ -168,3 +169,91 @@ class TestRefreshAirQualityTask:
         assert "Mumbai" in summaries
         assert summaries["Mumbai"]["cells"] == 1
         assert AirQualityData.objects.count() == 2
+
+
+TIMES_48 = [
+    (datetime(2026, 10, 6, 0, 0, tzinfo=dt_timezone.utc) + timedelta(hours=i)).strftime(
+        "%Y-%m-%dT%H:%M"
+    )
+    for i in range(48)
+]
+
+
+def _two_res7_cells() -> list[str]:
+    cells = [h3.latlng_to_cell(18.94, 72.835, 7), h3.latlng_to_cell(19.10, 72.95, 7)]
+    assert len(set(cells)) == 2
+    return cells
+
+
+def make_session_48(empty: bool = False) -> MagicMock:
+    """Per-variable mock session answering with a deterministic 48h series."""
+
+    def _get(url, params=None, timeout=None):
+        var = params["hourly"]
+        n = len(params["latitude"].split(","))
+        if empty:
+            values = []
+        elif var == "us_aqi":
+            values = [(i * 7 + 3) % 100 for i in range(48)]
+        else:
+            values = [round(((i * 7 + 3) % 100) / 10.0, 2) for i in range(48)]
+        # Multi-point API returns one response per requested point (list).
+        resp = MagicMock()
+        resp.json.return_value = [{"hourly": {"time": TIMES_48, var: values}}] * n
+        return resp
+
+    session = MagicMock()
+    session.get.side_effect = _get
+    return session
+
+
+@pytest.mark.django_db
+class TestAirQualityVolumeAndBoundary:
+    """P2-F7 hardening: 48h backfill volume = cells x 48 rows, idempotent
+    re-run adds 0, exact retention boundary (now - 14d survives,
+    now - 14d - 1h pruned)."""
+
+    def test_backfill_volume_is_cells_times_48(self):
+        cells = _two_res7_cells()
+        session = make_session_48()
+        with patch("apps.geo.services.city_weather_cells", return_value=cells):
+            res = fetch_air_quality_for_city("Mumbai", hours_ahead=48, session=session)
+
+        assert res["cells"] == 2
+        assert res["rows"] == 96
+        assert AirQualityData.objects.count() == 96
+        for cell in cells:
+            assert AirQualityData.objects.filter(h3_index=cell).count() == 48
+
+    def test_idempotent_second_run_adds_zero(self):
+        cells = _two_res7_cells()
+        session = make_session_48()
+        with patch("apps.geo.services.city_weather_cells", return_value=cells):
+            first = fetch_air_quality_for_city("Mumbai", hours_ahead=48, session=session)
+            second = fetch_air_quality_for_city("Mumbai", hours_ahead=48, session=session)
+
+        assert first["rows"] == second["rows"] == 96
+        assert AirQualityData.objects.count() == 96  # no duplicates on re-run
+
+    def test_retention_boundary_exactly_14d_survives(self):
+        cell = _two_res7_cells()[0]
+        now = timezone.now()
+        boundary_time = now - timedelta(days=14)             # == cutoff: strict < keeps it
+        just_old = now - timedelta(days=14) - timedelta(hours=1)  # pruned
+
+        AirQualityData.objects.create(
+            h3_index=cell, timestamp=boundary_time, us_aqi=40, source="open_meteo_aq"
+        )
+        AirQualityData.objects.create(
+            h3_index=cell, timestamp=just_old, us_aqi=41, source="open_meteo_aq"
+        )
+
+        with patch("apps.geo.services.city_weather_cells", return_value=[cell]):
+            res = fetch_air_quality_for_city(
+                "Mumbai", hours_ahead=48, now=now, session=make_session_48(empty=True)
+            )
+
+        assert res["rows"] == 0
+        assert res["pruned"] == 1
+        assert AirQualityData.objects.filter(timestamp=boundary_time).exists()
+        assert not AirQualityData.objects.filter(timestamp=just_old).exists()
