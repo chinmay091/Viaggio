@@ -154,3 +154,30 @@ class TestHistoricalBaselineModel:
                     stddev_active_count=Decimal("1.50"),
                     sample_count=12,
                 )
+
+    def test_choices_validation(self):
+        """Invalid resolution choice fails full_clean on ActivityAggregate and HistoricalBaseline."""
+        from django.core.exceptions import ValidationError
+
+        agg = ActivityAggregate(
+            h3_index="886a1080d3fffff",
+            resolution=99,
+            time_bucket=timezone.now(),
+            active_count=1,
+            event_count=1,
+        )
+        with pytest.raises(ValidationError):
+            agg.full_clean()
+
+        baseline = HistoricalBaseline(
+            h3_index="886a1080d3fffff",
+            resolution=99,
+            day_of_week=0,
+            time_bucket_minutes=0,
+            avg_active_count=Decimal("1.00"),
+            stddev_active_count=Decimal("0.50"),
+            sample_count=1,
+        )
+        with pytest.raises(ValidationError):
+            baseline.full_clean()
+
