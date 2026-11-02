@@ -184,7 +184,11 @@ class TestWeatherServiceExecution:
         mock_resp.json.return_value = sample_weather_payload
         mock_session.get.return_value = mock_resp
 
-        now = timezone.now()
+        # Pin `now` at the middle of the recorded fixture so the retention
+        # prune (now - 14d) stays inside the fixture window regardless of when
+        # the suite runs (the service prunes rows older than 14 days from `now`).
+        times = sample_weather_payload["hourly"]["time"]
+        now = datetime.fromisoformat(times[len(times) // 2]).replace(tzinfo=dt_timezone.utc)
         res1 = fetch_weather_for_city("Mumbai", hours_ahead=48, now=now, session=mock_session)
         assert res1["cells"] >= 1
         initial_count = WeatherData.objects.count()

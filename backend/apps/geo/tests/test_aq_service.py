@@ -22,6 +22,10 @@ from apps.places.models import Place
 
 TIMES = ["2026-10-06T12:00:00", "2026-10-06T13:00:00"]
 CELL = "87608b032ffffff"
+# The service prunes rows older than 14 days from `now`, so fixed-past
+# timestamps need a pinned `now` inside the retention window — otherwise the
+# suite rots once real time passes 14 days (detected in P3, 2026-11-02).
+NOW = datetime(2026, 10, 7, 12, 0, tzinfo=dt_timezone.utc)
 
 # Per-variable sample series for the two hours in TIMES.
 VALUES = {
@@ -68,7 +72,7 @@ def mumbai_place(db):
 class TestFetchAirQuality:
     def test_merges_variables_per_cell(self, mumbai_place):
         session = make_session({})
-        res = fetch_air_quality_for_city("Mumbai", hours_ahead=48, session=session)
+        res = fetch_air_quality_for_city("Mumbai", hours_ahead=48, now=NOW, session=session)
 
         assert res["cells"] == 1
         assert res["rows"] == 2
@@ -106,7 +110,7 @@ class TestFetchAirQuality:
         payloads = {var: [None, None] for var in AQ_VARIABLES}
         payloads["us_aqi"] = [40, None]
         session = make_session(payloads)
-        res = fetch_air_quality_for_city("Mumbai", hours_ahead=48, session=session)
+        res = fetch_air_quality_for_city("Mumbai", hours_ahead=48, now=NOW, session=session)
         assert res["rows"] == 1  # hour 2 all-null -> dropped
         row = AirQualityData.objects.get()
         assert row.us_aqi == 40
@@ -114,8 +118,8 @@ class TestFetchAirQuality:
 
     def test_upsert_idempotent(self, mumbai_place):
         session = make_session({})
-        first = fetch_air_quality_for_city("Mumbai", hours_ahead=48, session=session)
-        second = fetch_air_quality_for_city("Mumbai", hours_ahead=48, session=session)
+        first = fetch_air_quality_for_city("Mumbai", hours_ahead=48, now=NOW, session=session)
+        second = fetch_air_quality_for_city("Mumbai", hours_ahead=48, now=NOW, session=session)
         assert first["rows"] == second["rows"] == 2
         assert AirQualityData.objects.count() == 2
 
@@ -165,7 +169,10 @@ class TestRefreshAirQualityTask:
             session.get.side_effect = lambda url, params=None, timeout=None: MagicMock(
                 json=lambda: aq_payload(params["hourly"])
             )
-            summaries = refresh_air_quality()
+            # The task uses real time; pin it inside the retention window so
+            # the fixed-TIMES rows survive the prune (see NOW above).
+            with patch("apps.geo.services.timezone.now", return_value=NOW):
+                summaries = refresh_air_quality()
         assert "Mumbai" in summaries
         assert summaries["Mumbai"]["cells"] == 1
         assert AirQualityData.objects.count() == 2
@@ -177,6 +184,8 @@ TIMES_48 = [
     )
     for i in range(48)
 ]
+# `now` pinned just after the 48 h window (see NOW above).
+NOW48 = datetime(2026, 10, 8, 6, 0, tzinfo=dt_timezone.utc)
 
 
 def _two_res7_cells() -> list[str]:
@@ -217,7 +226,7 @@ class TestAirQualityVolumeAndBoundary:
         cells = _two_res7_cells()
         session = make_session_48()
         with patch("apps.geo.services.city_weather_cells", return_value=cells):
-            res = fetch_air_quality_for_city("Mumbai", hours_ahead=48, session=session)
+            res = fetch_air_quality_for_city("Mumbai", hours_ahead=48, now=NOW48, session=session)
 
         assert res["cells"] == 2
         assert res["rows"] == 96
@@ -229,8 +238,8 @@ class TestAirQualityVolumeAndBoundary:
         cells = _two_res7_cells()
         session = make_session_48()
         with patch("apps.geo.services.city_weather_cells", return_value=cells):
-            first = fetch_air_quality_for_city("Mumbai", hours_ahead=48, session=session)
-            second = fetch_air_quality_for_city("Mumbai", hours_ahead=48, session=session)
+            first = fetch_air_quality_for_city("Mumbai", hours_ahead=48, now=NOW48, session=session)
+            second = fetch_air_quality_for_city("Mumbai", hours_ahead=48, now=NOW48, session=session)
 
         assert first["rows"] == second["rows"] == 96
         assert AirQualityData.objects.count() == 96  # no duplicates on re-run
