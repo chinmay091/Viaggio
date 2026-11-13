@@ -255,6 +255,14 @@ CELERY_BEAT_SCHEDULE = {
         "task": "geo.refresh_air_quality",
         "schedule": crontab(minute=0, hour="*/6"),
     },
+    "activity-aggregate-hourly": {
+        "task": "activity.aggregate_hourly",
+        "schedule": crontab(minute=2),
+    },
+    "activity-baseline-weekly": {
+        "task": "activity.recompute_baselines",
+        "schedule": crontab(minute=30, hour=2, day_of_week=0),
+    },
 }
 
 # CORS Configuration
