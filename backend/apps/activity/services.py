@@ -12,16 +12,20 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from decimal import Decimal
 import logging
+import math
 from typing import Any, Optional
 import zoneinfo
 
+import h3
+
 from django.conf import settings
 from django.db import connection, transaction
-from django.db.models import Avg, Count, F, StdDev
+from django.db.models import Avg, Count, F, StdDev, Sum
 from django.db.models.functions import ExtractHour, ExtractIsoWeekDay, ExtractMinute
 from django.utils import timezone
 
 from apps.activity.models import ActivityAggregate, HistoricalBaseline, UserActivity
+from apps.geo.models import WeatherData
 
 logger = logging.getLogger(__name__)
 
@@ -259,3 +263,172 @@ def recompute_baselines(
     }
     logger.info("recompute_baselines completed: %s", summary)
     return summary
+
+
+def pulse_hotspots(
+    center: Any,
+    radius_m: float = 1000.0,
+    now: Optional[datetime] = None,
+    top_n: int = 10,
+) -> dict[str, Any]:
+    """
+    Compute City Pulse hotspots within radius_m of center point (P3-F5).
+
+    Computation:
+    1. current bucket = floor(now to 5 min) in IST
+    2. candidate cells = res8 cells whose centers are within radius_m of center
+    3. ActivityAggregate(resolution=8, time_bucket=current, h3_index__in=cells) with active_count > 0
+    4. per row: HistoricalBaseline(h3, 8, dow, minutes) -> z per P3-D6;
+       hour_total = sum of the cell's last 12 buckets (event_count)
+    5. order active_count desc, z_score desc nulls last, cap top_n (<= 50)
+    6. weather = latest WeatherData for center's parent res7 cell (timestamp <= now + 1h, desc) or None
+
+    Returns:
+        dict: {"generated_at", "timezone", "bucket", "radius_m", "hotspots", "weather"}
+    """
+    if hasattr(center, "y") and hasattr(center, "x"):
+        center_lat, center_lng = float(center.y), float(center.x)
+    elif isinstance(center, (tuple, list)):
+        center_lat, center_lng = float(center[0]), float(center[1])
+    else:
+        raise ValueError(f"Invalid center coordinates: {center}")
+
+    if now is None:
+        now = timezone.now()
+    elif timezone.is_naive(now):
+        now = timezone.make_aware(now, timezone.get_current_timezone())
+
+    ist = _get_ist_timezone()
+    now_ist = now.astimezone(ist)
+
+    # Floor to nearest 5 minutes
+    bucket_min = (now_ist.minute // 5) * 5
+    bucket_time = now_ist.replace(minute=bucket_min, second=0, microsecond=0)
+
+    # Candidate cells: centers within radius_m
+    origin_cell = h3.latlng_to_cell(center_lat, center_lng, 8)
+    k = int(math.ceil(radius_m / 500.0)) + 2
+    ring_cells = h3.grid_disk(origin_cell, k)
+    anchor_latlng = (center_lat, center_lng)
+    candidate_cells = [
+        cell
+        for cell in ring_cells
+        if h3.great_circle_distance(anchor_latlng, h3.cell_to_latlng(cell), unit="m") <= radius_m
+    ]
+
+    current_aggs = list(
+        ActivityAggregate.objects.filter(
+            resolution=8,
+            time_bucket=bucket_time,
+            h3_index__in=candidate_cells,
+            active_count__gt=0,
+        )
+    )
+
+    hotspots = []
+    if current_aggs:
+        matched_cell_indices = [agg.h3_index for agg in current_aggs]
+
+        # Hour total: sum of event_count across last 12 buckets [bucket_time - 55m, bucket_time]
+        start_hour_bucket = bucket_time - timedelta(minutes=55)
+        hour_totals_qs = (
+            ActivityAggregate.objects.filter(
+                resolution=8,
+                h3_index__in=matched_cell_indices,
+                time_bucket__gte=start_hour_bucket,
+                time_bucket__lte=bucket_time,
+            )
+            .values("h3_index")
+            .annotate(total=Sum("event_count"))
+        )
+        hour_totals = {item["h3_index"]: item["total"] for item in hour_totals_qs}
+
+        # Baseline per matched cell for this slot
+        dow = bucket_time.weekday()
+        minute_slot = bucket_time.hour * 60 + bucket_time.minute
+        baselines_qs = HistoricalBaseline.objects.filter(
+            resolution=8,
+            h3_index__in=matched_cell_indices,
+            day_of_week=dow,
+            time_bucket_minutes=minute_slot,
+        )
+        baselines = {b.h3_index: b for b in baselines_qs}
+
+        for agg in current_aggs:
+            cell = agg.h3_index
+            cell_lat, cell_lng = h3.cell_to_latlng(cell)
+            polygon = [[lng, lat] for lat, lng in h3.cell_to_boundary(cell)]
+
+            h_total = hour_totals.get(cell, agg.event_count)
+            baseline = baselines.get(cell)
+
+            baseline_avg = None
+            z_score = None
+            unusually_busy = False
+
+            if baseline is not None:
+                baseline_avg = float(baseline.avg_active_count)
+                stddev = float(baseline.stddev_active_count)
+                sample_count = baseline.sample_count
+
+                # P3-D6: z = (active_count - avg) / stddev only when stddev > 0 and sample_count >= 3; else z = null.
+                # unusually_busy = (z >= 2.0)
+                if stddev > 0 and sample_count >= 3:
+                    raw_z = (agg.active_count - baseline_avg) / stddev
+                    z_score = round(raw_z, 2)
+                    unusually_busy = bool(z_score >= 2.0)
+
+            hotspots.append({
+                "h3_index": cell,
+                "center": {"lat": round(cell_lat, 6), "lng": round(cell_lng, 6)},
+                "polygon": polygon,
+                "active_count": agg.active_count,
+                "event_count": agg.event_count,
+                "hour_total": h_total,
+                "baseline_avg": baseline_avg,
+                "z_score": z_score,
+                "unusually_busy": unusually_busy,
+            })
+
+        # Order: active_count desc, z_score desc nulls last
+        def sort_key(item):
+            has_z = 0 if item["z_score"] is not None else 1
+            z_val = -item["z_score"] if item["z_score"] is not None else 0
+            return (-item["active_count"], has_z, z_val)
+
+        hotspots.sort(key=sort_key)
+        clamped_top_n = min(50, max(1, top_n))
+        hotspots = hotspots[:clamped_top_n]
+
+    # Weather context for anchor's parent res7 cell
+    anchor_res7 = h3.cell_to_parent(origin_cell, 7)
+    latest_weather = (
+        WeatherData.objects.filter(
+            h3_index=anchor_res7,
+            timestamp__lte=now + timedelta(hours=1),
+        )
+        .order_by("-timestamp")
+        .first()
+    )
+
+    weather_dict = None
+    if latest_weather:
+        local_ts = latest_weather.timestamp.astimezone(ist)
+        weather_dict = {
+            "temperature_c": float(latest_weather.temperature_c),
+            "weather_code": latest_weather.weather_code,
+            "precipitation_probability": float(latest_weather.precipitation_probability),
+            "is_forecast": latest_weather.is_forecast,
+            "timestamp": latest_weather.timestamp.isoformat(),
+            "local_time": local_ts.isoformat(),
+        }
+
+    return {
+        "generated_at": now_ist.isoformat(),
+        "timezone": "Asia/Kolkata",
+        "bucket": bucket_time.isoformat(),
+        "radius_m": radius_m,
+        "hotspots": hotspots,
+        "weather": weather_dict,
+    }
+

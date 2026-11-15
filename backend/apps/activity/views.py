@@ -14,12 +14,14 @@ submit raw coordinates or times.
 """
 
 from datetime import timedelta
+from django.contrib.gis.geos import Point
 from django.db import transaction
 from django.http import Http404
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -33,7 +35,9 @@ from .serializers import (
     CheckInSerializer,
     PlaceViewCreateSerializer,
     PlaceViewResponseSerializer,
+    PulseResponseSerializer,
 )
+from .services import pulse_hotspots
 
 VIEW_DEBOUNCE_MINUTES = 10
 
@@ -168,3 +172,107 @@ class PlaceViewCreateView(APIView):
                 source=source,
             )
             return view, True
+
+
+DEFAULT_RADIUS_M = 1000
+MIN_RADIUS_M = 100
+MAX_RADIUS_M = 25000
+DEFAULT_TOP_N = 10
+MAX_TOP_N = 50
+
+LAT_PARAM = OpenApiParameter(
+    "lat",
+    OpenApiTypes.FLOAT,
+    location=OpenApiParameter.QUERY,
+    required=True,
+    description="Center latitude (WGS84, -90..90)",
+)
+LNG_PARAM = OpenApiParameter(
+    "lng",
+    OpenApiTypes.FLOAT,
+    location=OpenApiParameter.QUERY,
+    required=True,
+    description="Center longitude (WGS84, -180..180)",
+)
+RADIUS_PARAM = OpenApiParameter(
+    "radius_m",
+    OpenApiTypes.FLOAT,
+    location=OpenApiParameter.QUERY,
+    description=f"Search radius in meters (default {DEFAULT_RADIUS_M}, clamped {MIN_RADIUS_M}-{MAX_RADIUS_M})",
+)
+TOP_N_PARAM = OpenApiParameter(
+    "top_n",
+    OpenApiTypes.INT,
+    location=OpenApiParameter.QUERY,
+    description=f"Max hotspots to return (default {DEFAULT_TOP_N}, clamped 1-{MAX_TOP_N})",
+)
+
+
+def _center_from_params(params):
+    """Validate required lat/lng query params -> WGS84 Point(geography)."""
+    errors = {}
+    values = {}
+    for key, lo, hi in (("lat", -90.0, 90.0), ("lng", -180.0, 180.0)):
+        raw = params.get(key, "")
+        if raw is None or not str(raw).strip():
+            errors[key] = "This query parameter is required."
+            continue
+        try:
+            value = float(raw)
+        except ValueError:
+            errors[key] = "A valid number is required."
+            continue
+        if not (lo <= value <= hi):
+            errors[key] = f"Must be between {lo} and {hi}."
+            continue
+        values[key] = value
+    if errors:
+        raise ValidationError(errors)
+    return Point(values["lng"], values["lat"], srid=4326)
+
+
+def _radius_from_params(params):
+    """radius_m: default 1000, clamped to 100-25000."""
+    raw = params.get("radius_m", "")
+    if raw is None or not str(raw).strip():
+        return DEFAULT_RADIUS_M
+    try:
+        radius = float(raw)
+    except ValueError:
+        raise ValidationError({"radius_m": "A valid number is required."})
+    return max(MIN_RADIUS_M, min(MAX_RADIUS_M, radius))
+
+
+def _top_n_from_params(params):
+    """top_n: default 10, clamped 1-50."""
+    raw = params.get("top_n", "")
+    if raw is None or not str(raw).strip():
+        return DEFAULT_TOP_N
+    try:
+        top_n = int(raw)
+    except ValueError:
+        raise ValidationError({"top_n": "A valid integer is required."})
+    return max(1, min(MAX_TOP_N, top_n))
+
+
+class PulseView(APIView):
+    """GET /api/v1/activity/pulse/ — City Pulse hotspots vs baseline (P3-F5)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        parameters=[LAT_PARAM, LNG_PARAM, RADIUS_PARAM, TOP_N_PARAM],
+        responses={200: PulseResponseSerializer},
+        summary="City Pulse hotspots",
+        description=(
+            "Returns active H3 resolution 8 hotspots within radius_m of the anchor point, "
+            "with baseline comparisons (z-score, unusually_busy flag) and parent-cell weather context."
+        ),
+    )
+    def get(self, request):
+        center = _center_from_params(request.query_params)
+        radius_m = _radius_from_params(request.query_params)
+        top_n = _top_n_from_params(request.query_params)
+        data = pulse_hotspots(center=center, radius_m=radius_m, top_n=top_n)
+        return Response(data, status=status.HTTP_200_OK)
+

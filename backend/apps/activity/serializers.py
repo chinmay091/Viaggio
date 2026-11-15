@@ -68,3 +68,49 @@ class PlaceViewResponseSerializer(serializers.Serializer):
         choices=("created", "merged"),
         help_text="'created' for a new view; 'merged' when debounced into an existing row",
     )
+
+
+class CenterCoordinatesSerializer(serializers.Serializer):
+    """Lat/lng center point."""
+
+    lat = serializers.FloatField()
+    lng = serializers.FloatField()
+
+
+class HotspotSerializer(serializers.Serializer):
+    """City Pulse hotspot item."""
+
+    h3_index = serializers.CharField()
+    center = CenterCoordinatesSerializer()
+    polygon = serializers.ListField(
+        child=serializers.ListField(child=serializers.FloatField(), min_length=2, max_length=2)
+    )
+    active_count = serializers.IntegerField()
+    event_count = serializers.IntegerField()
+    hour_total = serializers.IntegerField()
+    baseline_avg = serializers.FloatField(allow_null=True)
+    z_score = serializers.FloatField(allow_null=True)
+    unusually_busy = serializers.BooleanField()
+
+
+class WeatherContextSerializer(serializers.Serializer):
+    """Weather context for parent res7 cell."""
+
+    temperature_c = serializers.FloatField()
+    weather_code = serializers.IntegerField()
+    precipitation_probability = serializers.FloatField()
+    is_forecast = serializers.BooleanField()
+    timestamp = serializers.DateTimeField()
+    local_time = serializers.DateTimeField()
+
+
+class PulseResponseSerializer(serializers.Serializer):
+    """GET /activity/pulse/ response."""
+
+    generated_at = serializers.DateTimeField()
+    timezone = serializers.CharField()
+    bucket = serializers.DateTimeField()
+    radius_m = serializers.FloatField()
+    hotspots = HotspotSerializer(many=True)
+    weather = WeatherContextSerializer(allow_null=True)
+
