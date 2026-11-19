@@ -139,7 +139,9 @@ class WeatherNowView(_GeoQueryView):
         )
         if row is None:
             raise NotFound("No cached weather data for this location.")
-        return Response(WeatherPointSerializer(_point_payload(row)).data)
+        data = WeatherPointSerializer(_point_payload(row)).data
+        data["timezone"] = settings.TIME_ZONE
+        return Response(data)
 
 
 class WeatherForecastView(_GeoQueryView):

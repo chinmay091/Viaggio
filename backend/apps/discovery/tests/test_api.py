@@ -198,3 +198,47 @@ class TestDelete:
 
         assert response.status_code == 404
         assert_error_envelope(response.json())
+
+
+class TestIsolationAtScale:
+    """P3-F9: cross-user isolation under bulk saves (10 users x 5 places)."""
+
+    def test_each_user_sees_only_their_own_saves(self, api_client):
+        from apps.accounts.factories import UserFactory
+
+        users = UserFactory.create_batch(10)
+        places = PlaceFactory.create_batch(5)
+        for user in users:
+            for place in places:
+                SavedPlaceFactory(user=user, place=place)
+        assert SavedPlace.objects.count() == 50
+
+        for user in users:
+            api_client.force_authenticate(user=user)
+            response = api_client.get(SAVED_URL)
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["count"] == 5
+            assert {r["place"]["id"] for r in data["results"]} == {
+                str(p.pk) for p in places
+            }
+
+    def test_delete_across_users_at_scale(self, api_client):
+        from apps.accounts.factories import UserFactory
+
+        users = UserFactory.create_batch(10)
+        places = PlaceFactory.create_batch(5)
+        for user in users:
+            SavedPlaceFactory(user=user, place=places[0])
+
+        # Every user deletes the same place: each succeeds (their own row)...
+        for user in users:
+            api_client.force_authenticate(user=user)
+            response = api_client.delete(f"{SAVED_URL}{places[0].pk}/")
+            assert response.status_code == 204
+
+        assert SavedPlace.objects.count() == 0
+        # ...and an 11th delete finds nothing.
+        api_client.force_authenticate(user=users[0])
+        assert api_client.delete(f"{SAVED_URL}{places[0].pk}/").status_code == 404

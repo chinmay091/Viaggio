@@ -363,3 +363,50 @@ class TestPulseHotspotsAndWeather:
             lng, lat = vertex
             assert -180.0 <= lng <= 180.0
             assert -90.0 <= lat <= 90.0
+
+
+class TestConcurrentCheckIn:
+    """P3-F9: concurrent check-in double-fire on the same place — row-level
+    safety: every event yields exactly one complete row (no DB constraint
+    needed; ``transaction=True`` so both threads' connections see the rows)."""
+
+    @pytest.mark.django_db(transaction=True)
+    def test_concurrent_check_ins_one_complete_row_per_event(self):
+        import threading
+
+        from apps.activity.models import UserActivity
+        from apps.places.factories import PlaceFactory
+
+        user = UserFactory(location_sharing_consent=True)
+        place = PlaceFactory()
+        n = 8
+        barrier = threading.Barrier(n)
+        results: list = []
+
+        def worker():
+            try:
+                barrier.wait(timeout=30)
+                client = APIClient()
+                client.force_authenticate(user=user)
+                resp = client.post(
+                    "/api/v1/activity/check-in/",
+                    {"place_id": str(place.pk)},
+                    format="json",
+                )
+                results.append(resp.status_code)
+            except Exception as exc:  # pragma: no cover - test harness
+                results.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=120)
+
+        assert all(s == 201 for s in results), f"unexpected statuses: {results}"
+        rows = list(UserActivity.objects.filter(user=user, place=place))
+        assert len(rows) == n, f"expected {n} rows, got {len(rows)}"
+        for row in rows:
+            assert row.h3_index_res8 == place.h3_index_res8
+            assert row.h3_index_res9 == place.h3_index_res9
+            assert row.timestamp is not None
