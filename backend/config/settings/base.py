@@ -275,6 +275,12 @@ CORS_ALLOWED_ORIGINS = [
 
 # Viaggio Domain Specific Settings
 VIAGGIO_LLM_PROVIDER = os.environ.get("VIAGGIO_LLM_PROVIDER", "rule_based")
+# Cities included in the periodic weather/AQ refresh jobs (P3-F7, P3-D9).
+VIAGGIO_WEATHER_CITIES = [
+    city.strip()
+    for city in os.environ.get("VIAGGIO_WEATHER_CITIES", "Mumbai").split(",")
+    if city.strip()
+]
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 OSRM_BASE_URL = os.environ.get("OSRM_BASE_URL", "http://localhost:5000")

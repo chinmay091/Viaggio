@@ -12,6 +12,7 @@ api_v1_patterns = [
     path("places/", include("apps.places.urls")),
     path("discovery/", include("apps.discovery.urls")),
     path("activity/", include("apps.activity.urls")),
+    path("geo/", include("apps.geo.urls")),
     path("recommendations/", include("apps.recommendations.urls")),
     path("bookings/", include("apps.bookings.urls")),
     path("restaurants/", include("apps.restaurants.urls")),
