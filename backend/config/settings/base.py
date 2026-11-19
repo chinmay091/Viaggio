@@ -263,6 +263,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "activity.recompute_baselines",
         "schedule": crontab(minute=30, hour=2, day_of_week=0),
     },
+    "activity-area-context-hourly": {
+        "task": "activity.refresh_area_context",
+        "schedule": crontab(minute=35),
+    },
 }
 
 # CORS Configuration

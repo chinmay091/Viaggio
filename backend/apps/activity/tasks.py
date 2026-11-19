@@ -4,7 +4,7 @@ Celery tasks for activity domain: hourly aggregation and weekly baselines (P3-F4
 
 from celery import shared_task
 
-from apps.activity.services import aggregate_activity, recompute_baselines
+from apps.activity.services import aggregate_activity, refresh_area_context, recompute_baselines
 
 
 @shared_task(name="activity.aggregate_hourly")
@@ -25,3 +25,13 @@ def recompute_baselines_task():
     Triggered weekly on Sunday at 02:30 IST via Celery Beat.
     """
     return recompute_baselines()
+
+
+@shared_task(name="activity.refresh_area_context")
+def refresh_area_context_task():
+    """
+    Periodic task to precompute ``geo.AreaContext`` for the top res8 cells by
+    last-hour check-ins (rule-based summary, P3-D7).
+    Triggered hourly at minute :35 via Celery Beat.
+    """
+    return refresh_area_context()

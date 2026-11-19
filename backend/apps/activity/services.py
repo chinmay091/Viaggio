@@ -9,7 +9,7 @@ P3-D5: Weekly baseline recompute over last 56 days of aggregates (8 weeks)
 """
 
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
 import logging
 import math
@@ -25,7 +25,8 @@ from django.db.models.functions import ExtractHour, ExtractIsoWeekDay, ExtractMi
 from django.utils import timezone
 
 from apps.activity.models import ActivityAggregate, HistoricalBaseline, UserActivity
-from apps.geo.models import WeatherData
+from apps.geo.models import AreaContext, WeatherData
+from apps.places.models import Place
 
 logger = logging.getLogger(__name__)
 
@@ -431,4 +432,125 @@ def pulse_hotspots(
         "hotspots": hotspots,
         "weather": weather_dict,
     }
+
+
+AREA_CONTEXT_TOP_CELLS = 20
+AREA_CONTEXT_TOP_PLACES = 5
+AREA_CONTEXT_TOP_CATEGORIES = 5
+AREA_CONTEXT_TTL_HOURS = 3
+
+
+def refresh_area_context(now: Optional[datetime] = None) -> dict[str, Any]:
+    """
+    Precompute ``geo.AreaContext`` rows for the top res8 cells by last-hour
+    check-ins (P3-D7).
+
+    Rule-based enrichment only — ``llm_provider="rule_based"`` (LLM enrichment
+    is Phase 4). Idempotent: ``update_or_create`` on the unique
+    ``(h3_index, time_bucket)`` key; rows past their TTL are pruned in the
+    same run.
+    """
+    now = now or timezone.now()
+    ist = _get_ist_timezone()
+    # Time bucket = top of the current IST hour, stored as an aware UTC datetime.
+    bucket = (
+        now.astimezone(ist)
+        .replace(minute=0, second=0, microsecond=0)
+        .astimezone(dt_timezone.utc)
+    )
+    window_start = now - timedelta(hours=1)
+
+    top_cells = (
+        UserActivity.objects.filter(timestamp__gte=window_start)
+        .values("h3_index_res8")
+        .annotate(check_ins=Count("id"))
+        .order_by("-check_ins", "h3_index_res8")[:AREA_CONTEXT_TOP_CELLS]
+    )
+
+    written = 0
+    for cell_row in top_cells:
+        cell = cell_row["h3_index_res8"]
+        check_ins = cell_row["check_ins"]
+
+        place_counts = {
+            str(r["place_id"]): r["n"]
+            for r in UserActivity.objects.filter(
+                timestamp__gte=window_start, h3_index_res8=cell
+            )
+            .values("place_id")
+            .annotate(n=Count("id"))
+        }
+        ranked_places = []
+        for place in Place.objects.filter(is_active=True, h3_index_res8=cell):
+            n = place_counts.get(str(place.pk), 0)
+            if n:
+                ranked_places.append(
+                    {"place_id": str(place.pk), "name": place.name, "score": n, "category": place.category}
+                )
+        ranked_places.sort(key=lambda p: (-p["score"], p["name"]))
+        top_places = [
+            {"place_id": p["place_id"], "name": p["name"], "score": p["score"]}
+            for p in ranked_places[:AREA_CONTEXT_TOP_PLACES]
+        ]
+
+        category_scores: dict[str, int] = {}
+        for p in ranked_places[:AREA_CONTEXT_TOP_PLACES]:
+            if p["category"]:
+                category_scores[p["category"]] = category_scores.get(p["category"], 0) + p["score"]
+        top_categories = [
+            {"category": c, "score": s}
+            for c, s in sorted(category_scores.items(), key=lambda kv: (-kv[1], kv[0]))[
+                :AREA_CONTEXT_TOP_CATEGORIES
+            ]
+        ]
+
+        weather = (
+            WeatherData.objects.filter(
+                h3_index=h3.cell_to_parent(cell, 7),
+                timestamp__lte=now + timedelta(hours=1),
+            )
+            .order_by("-timestamp")
+            .first()
+        )
+        weather_context: dict[str, Any] = {}
+        if weather:
+            weather_context = {
+                "h3_index": weather.h3_index,
+                "timestamp": weather.timestamp.isoformat(),
+                "local_time": weather.timestamp.astimezone(ist).isoformat(),
+                "is_forecast": weather.is_forecast,
+                "temperature_c": float(weather.temperature_c),
+                "weather_code": weather.weather_code,
+                "precipitation_probability": float(weather.precipitation_probability),
+            }
+
+        summary_parts = [
+            f"{check_ins} check-in{'s' if check_ins != 1 else ''} in the last hour"
+        ]
+        if top_categories:
+            summary_parts.append(
+                "top categories: " + ", ".join(c["category"] for c in top_categories)
+            )
+        if weather_context:
+            summary_parts.append(
+                f"temperature {weather_context['temperature_c']:.0f}°C"
+            )
+
+        AreaContext.objects.update_or_create(
+            h3_index=cell,
+            time_bucket=bucket,
+            defaults={
+                "activity_summary": {"check_ins": check_ins, "window_minutes": 60},
+                "top_categories": top_categories,
+                "top_places": top_places,
+                "weather_context": weather_context,
+                "llm_summary": "; ".join(summary_parts) + ".",
+                "llm_provider": "rule_based",
+                "expires_at": now + timedelta(hours=AREA_CONTEXT_TTL_HOURS),
+            },
+        )
+        written += 1
+
+    pruned, _ = AreaContext.objects.filter(expires_at__lt=now).delete()
+    return {"cells": written, "bucket": bucket.isoformat(), "pruned": pruned}
 
